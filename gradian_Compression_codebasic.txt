@@ -1,0 +1,140 @@
+---------------------------------------------------------------------------------------------------------------------
+------------------------------------Python code for Gradiant compression Algorithm-----------------------------------
+---------------------------------------------------------------------------------------------------------------------
+
+import numpy as np
+
+def compress(grads, precision):
+    """Compresses the gradients using stochastic rounding"""
+    scale = 2 ** precision
+    signs = np.sign(grads)
+    noise = np.random.uniform(0, 1/scale, size=grads.shape)
+    rounded = np.round(grads * scale + noise) / scale
+    compressed = rounded * signs
+    return compressed
+
+def decompress(compressed, precision):
+    """Decompresses the gradients"""
+    scale = 2 ** precision
+    decompressed = compressed / scale
+    return decompressed
+
+def update_params(params, grads, learning_rate):
+    """Updates the model parameters using the gradients"""
+    params -= learning_rate * grads
+    return params
+
+------------------------------------------------------------------------------------------------------------------------
+---------------------------Improved python code with cython, vectorisation and paralellisation--------------------------
+------------------------------------------------------------------------------------------------------------------------
+
+
+import numpy as np
+cimport numpy as cnp
+cimport cython
+from cython.parallel cimport prange
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def euclidean_distance(cnp.ndarray[cnp.float64_t, ndim=1] x, cnp.ndarray[cnp.float64_t, ndim=1] y):
+    cdef double distance = 0.0
+    for i in prange(x.shape[0]):
+        distance += (x[i] - y[i])**2
+    return np.sqrt(distance)
+@cython.boundscheck(False)
+@cython.wraparound(False)
+def KMeans(cnp.ndarray[cnp.float64_t, ndim=2] X, int K, int max_iters):
+    cdef cnp.ndarray[cnp.float64_t, ndim=2] centroids = X[np.random.choice(range(X.shape[0]), K), :]
+    cdef cnp.ndarray[cnp.int_t, ndim=1] closest_clusters = np.empty(X.shape[0], dtype=int)
+    cdef int i, j, n
+    for i in range(max_iters):
+        clusters = [[] for _ in range(K)]
+        for n in prange(X.shape[0]):
+            distances = [euclidean_distance(X[n], centroids[k]) for k in range(K)]
+            closest_cluster = np.argmin(distances)
+            clusters[closest_cluster].append(X[n])
+            closest_clusters[n] = closest_cluster
+        for j in range(K):
+            centroids[j] = np.mean(np.array(clusters[j]), axis=0)
+    return clusters, centroids, closest_clusters
+
+
+
+                          //  Now using chatGPT, we shall see for errors and areas of improvements, and the code is as below with the feedback//
+
+
+-----------------------------------------------------------------------------------------------------------------------------------------------
+----------------------------ChatGPT improved version with feedback-------------------------------------------
+
+
+# cython: boundscheck=False, wraparound=False, nonecheck=False, cdivision=True
+# distutils: language = c++
+
+import numpy as np
+cimport numpy as np
+cimport cython
+
+# Parallelization using OpenMP
+cdef int NUM_THREADS = 4
+cdef int OMP_SCHEDULE = 'static'
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+@cython.cdivision(True)
+@cython.parallel(num_threads=NUM_THREADS, schedule=OMP_SCHEDULE)
+cdef void compress_gradients(double[:, :] grads, double norm_bound) nogil:
+    cdef Py_ssize_t i, j
+    cdef double norm_squared
+    cdef double tmp
+    for i in cython.prange(grads.shape[0]):
+        norm_squared = 0.0
+        for j in range(grads.shape[1]):
+            norm_squared += grads[i, j] * grads[i, j]
+if norm_squared > norm_bound * norm_bound:
+            norm = np.sqrt(norm_squared)
+            for j in range(grads.shape[1]):
+                tmp = grads[i, j] / norm * norm_bound
+                grads[i, j] = tmp
+        else:
+            for j in range(grads.shape[1]):
+                if grads[i, j] > norm_bound:
+                    grads[i, j] = norm_bound
+                elif grads[i, j] < -norm_bound:
+                    grads[i, j] = -norm_bound
+cdef void compress_gradients_v2(double[:, :] grads, double norm_bound) nogil:
+    grads_norms_squared = np.sum(grads ** 2, axis=1)
+    large_norms = grads_norms_squared > norm_bound ** 2
+    large_norms_idxs = np.where(large_norms)[0]
+    large_norms_values = np.sqrt(grads_norms_squared[large_norms_idxs])
+    grads_norms_large_norms = grads[large_norms_idxs] / large_norms_values[:, np.newaxis] * norm_bound
+    grads_norms_small_norms = np.clip(grads[~large_norms], -norm_bound, norm_bound)
+    grads_norms = np.concatenate((grads_norms_large_norms, grads_norms_small_norms), axis=0)
+    grads[:] = grads_norms
+
+def compress_gradients_py(double[:, :] grads, double norm_bound):
+    return compress(grads, int(np.log2(norm_bound)))
+
+def compress_gradients_cy(double[:, :] grads, double norm_bound):
+    compress_gradients(grads, norm_bound)
+
+def compress_gradients_cy_v2(double[:, :] grads, double norm_bound):
+    compress_gradients_v2(grads, norm_bound)
+
+
+
+
+
+/*1. )Avoiding the use of np.sqrt function: 
+The np.sqrt function is relatively expensive and can slow down the code. 
+Instead, we can use the squared norm to compare with the norm bound, and 
+only compute the square root if necessary.
+
+2.) Avoiding the use of np.vectorize: 
+Although np.vectorize provides a convenient way to apply a function 
+element-wise to a numpy array, it can be slower than other options, such as 
+using numpy broadcasting.*/
+
+
+
+
